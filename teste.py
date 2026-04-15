@@ -191,7 +191,7 @@ with st.expander("📖 Guia Rápido: Como usar a ferramenta", expanded=False):
 # -------------------------
 with st.sidebar:
     st.header("⚙️ Base Logística")
-    arq = st.file_uploader("Subir Faixas J&T (.xlsx)", type=["xlsx", "xls"])
+    arq = st.file_uploader("**Subir Faixas Terceiro segmento Faixa de Cep J&T (.xlsx)**", type=["xlsx", "xls"])
     df_faixas = None
     if arq:
         df_faixas = pd.read_excel(arq).rename(columns={v: k for k, v in COLUNAS_FAIXA.items()})
