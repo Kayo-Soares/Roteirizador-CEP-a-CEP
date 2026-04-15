@@ -9,6 +9,12 @@ import google.generativeai as genai
 from datetime import datetime, timedelta
 
 import pandas as pd
+def formatar_tempo(tempo_em_segundos):
+    minutos = int(tempo_em_segundos // 60)
+    segundos = tempo_em_segundos % 60
+    if minutos > 0:
+        return f"{minutos}m {segundos:.2f}s"
+    return f"{segundos:.2f}s"
 import streamlit as st
 
 # ── Configurações de Interface ────────────────────────────────────────────────
@@ -18,9 +24,41 @@ st.markdown("""
     <style>
     #MainMenu {visibility: hidden;} footer {visibility: hidden;}
     .block-container { padding-top: 2rem; padding-bottom: 2rem; }
-    .stButton>button { width: 100%; border-radius: 8px; font-weight: 600; background-color: #4CAF50; color: white; border: none; transition: 0.3s; }
-    .stButton>button:hover { transform: translateY(-2px); box-shadow: 0 4px 10px rgba(76, 175, 80, 0.3); }
-    div[data-testid="metric-container"] { background-color: rgba(128, 128, 128, 0.1); border-radius: 10px; padding: 15px; border-left: 5px solid #4CAF50; }
+    
+    /* Botões Padrão J&T Express */
+    .stButton>button { 
+        width: 100%; 
+        border-radius: 8px; 
+        font-weight: 700; 
+        background-color: #E3000F; 
+        color: white; 
+        border: none; 
+        transition: 0.3s; 
+    }
+    .stButton>button:hover { 
+        background-color: #BA000C;
+        transform: translateY(-2px); 
+        box-shadow: 0 4px 10px rgba(227, 0, 15, 0.3); 
+    }
+    
+    /* Painéis de Indicadores (KPIs) com barra lateral vermelha */
+    div[data-testid="metric-container"] { 
+        background-color: rgba(128, 128, 128, 0.1); 
+        border-radius: 10px; 
+        padding: 15px; 
+        border-left: 5px solid #E3000F; 
+    }
+    
+    /* Destacar os títulos das abas */
+    .stTabs [data-baseweb="tab-list"] button [data-testid="stMarkdownContainer"] p {
+        font-size: 1.1rem;
+        font-weight: 600;
+            
+    /* Forçar Barra de Progresso Vermelha J&T */
+    .stProgress > div > div > div > div {
+        background-color: #E3000F !important;
+    }        
+
     </style>
 """, unsafe_allow_html=True)
 
@@ -215,6 +253,7 @@ with tab1:
                 t0 = time.time()
                 res = asyncio.run(processar_lote(ceps, df_faixas, progresso, status))
                 df_res = pd.DataFrame(res)
+                tempo_total = time.time() - t0
                 status.success(f"⚡ Tempo: {time.time()-t0:.2f}s")
                 renderizar_kpis(df_res)
                 st.dataframe(df_res, use_container_width=True)
@@ -245,7 +284,7 @@ with tab2:
             df_consulta = df_consulta.drop(columns=["cep_input", "erro"], errors="ignore")
             
             df_final = pd.concat([df_p.reset_index(drop=True), df_consulta.reset_index(drop=True)], axis=1)
-            
+            tempo_total = time.time() - t0
             status.success(f"⚡ Tempo: {time.time()-t0:.2f}s")
             renderizar_kpis(df_consulta)
             st.dataframe(df_final.head(100), use_container_width=True)
@@ -279,7 +318,7 @@ with tab3:
                 t0 = time.time()
                 res = asyncio.run(processar_lote(ceps_para_consultar, df_faixas, progresso, status))
                 df_res_faixas = pd.DataFrame(res).sort_values(by="cep_input").reset_index(drop=True)
-                
+                tempo_total = time.time() - t0
                 status.success(f"⚡ Tempo: {time.time()-t0:.2f}s")
                 renderizar_kpis(df_res_faixas)
                 st.dataframe(df_res_faixas, use_container_width=True)
