@@ -16,7 +16,7 @@ st.set_page_config(page_title="Roteirizador J&T Express", layout="wide", page_ic
 
 st.markdown("""
     <style>
-    #MainMenu {visibility: hidden;} footer {visibility: hidden;} header {visibility: hidden;}
+    #MainMenu {visibility: hidden;} footer {visibility: hidden;}
     .block-container { padding-top: 2rem; padding-bottom: 2rem; }
     .stButton>button { width: 100%; border-radius: 8px; font-weight: 600; background-color: #4CAF50; color: white; border: none; transition: 0.3s; }
     .stButton>button:hover { transform: translateY(-2px); box-shadow: 0 4px 10px rgba(76, 175, 80, 0.3); }
