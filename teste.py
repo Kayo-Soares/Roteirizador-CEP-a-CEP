@@ -160,14 +160,14 @@ async def obter_cep(session, cep, bruto=""):
             endereco = f"{dados_base.get('logradouro')}, {dados_base.get('bairro')}, {dados_base.get('cidade')} - {dados_base.get('estado')}"
             prompt = f"Retorne apenas um JSON plano com as chaves 'lat' e 'lon' para o endereço: {endereco}. Se não souber a rua, use o centro do bairro."
             response = await asyncio.to_thread(ai_model.generate_content, prompt)
-            geo = json.loads(response.text.replace('```json', '').replace('```', '').strip())
+            texto_limpo = response.text.replace('```json', '').replace('```', '').strip()
+            geo = json.loads(texto_limpo)
             dados_base["lat"] = str(geo.get("lat"))
             dados_base["lon"] = str(geo.get("lon"))
             dados_base["fonte_api"] = "🧠 Geocodificado por IA"
-        except: pass
-
-    if "fonte_api" not in dados_base: dados_base["fonte_api"] = "🌐 BrasilAPI"
-
+        except Exception as e:
+            print(f"🚨 ERRO GEMINI (CEP {cep}): {e}") # Imprime o erro real no terminal
+            dados_base["fonte_api"] = "⚠️ Falha na IA" # Mostra na tela que a culpa foi do Gemini
     # 4. Salvar/Atualizar no Supabase
     try:
         await asyncio.to_thread(lambda: supabase.table("cache_ceps").upsert({
