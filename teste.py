@@ -269,3 +269,20 @@ with t3:
         st.success(f"⏱️ Tempo: {formatar_tempo(time.time() - t0)}")
         renderizar_kpis(df)
         st.dataframe(df)
+
+        st.sidebar.markdown("---")
+if st.sidebar.button("🛠️ Testar Conexão Supabase"):
+    try:
+        teste_dados = {
+            "cep": "99999999",
+            "logradouro": "Rua do Teste",
+            "bairro": "Bairro Teste",
+            "localidade": "Cidade Teste",
+            "uf": "TS",
+            "lat": "0",
+            "lon": "0"
+        }
+        res = supabase.table("cache_ceps").upsert(teste_dados).execute()
+        st.sidebar.success("✅ Gravou com sucesso! O banco está perfeito.")
+    except Exception as e:
+        st.sidebar.error(f"🚨 O BANCO RECUSOU: {e}")
