@@ -166,8 +166,9 @@ async def obter_cep(session, cep, bruto=""):
             dados_base["lon"] = str(geo.get("lon"))
             dados_base["fonte_api"] = "🧠 Geocodificado por IA"
         except Exception as e:
-            print(f"🚨 ERRO GEMINI (CEP {cep}): {e}") # Imprime o erro real no terminal
-            dados_base["fonte_api"] = "⚠️ Falha na IA" # Mostra na tela que a culpa foi do Gemini
+            print(f"🚨 ERRO GEMINI (CEP {cep}): {e}")
+            # Vai colocar o motivo do erro direto na tabela para a gente ler! 👇
+            dados_base["fonte_api"] = f"⚠️ Erro IA: {str(e)[:45]}"
     # 4. Salvar/Atualizar no Supabase
     try:
         await asyncio.to_thread(lambda: supabase.table("cache_ceps").upsert({
