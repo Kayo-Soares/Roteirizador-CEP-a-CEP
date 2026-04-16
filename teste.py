@@ -24,10 +24,8 @@ def formatar_cep_hifen(cep):
 # ── Interface ─────────────────────────────────────────────────────────────────
 st.set_page_config(page_title="Roteirizador J&T Express", layout="wide", page_icon="🚚")
 
-# Título Original
 st.title("🚚 Roteirizador J&T Express")
 
-# Guia de Uso Restaurado
 with st.expander("📖 Guia Rápido: Como usar a ferramenta", expanded=False):
     st.markdown("""
     ### 🛠️ Passo a Passo
@@ -39,86 +37,35 @@ with st.expander("📖 Guia Rápido: Como usar a ferramenta", expanded=False):
     3. **Resultado:** O sistema retorna Logradouro, Bairro, Cidade, Estado, Lat/Lon e a Unidade J&T.
     """)
 
-# Estilo J&T
+# CSS Moderno (Cards com sombra, botões arredondados)
 st.markdown("""
     <style>
-    /* 1. Ajuste de Espaçamento e Fonte */
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
+    .block-container { padding-top: 2rem; max-width: 95%; font-family: 'Inter', sans-serif; }
     
-    .block-container { 
-        padding-top: 2rem; 
-        max-width: 95%; 
-    }
-
-    /* 2. Cards de KPI (Métricas) Modernos */
-    /* Criamos uma sombra suave e bordas arredondadas para dar profundidade */
     div[data-testid="metric-container"] { 
-        background-color: rgba(255, 255, 255, 0.05) !important; /* Leve transparência que funciona em qualquer fundo */
+        background-color: rgba(255, 255, 255, 0.05) !important;
         border: 1px solid rgba(128, 128, 128, 0.2) !important;
         border-radius: 12px !important;
         padding: 20px !important;
-        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06) !important;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1) !important;
         transition: transform 0.2s ease-in-out !important;
+        border-left: 5px solid #E3000F !important;
     }
-    div[data-testid="metric-container"]:hover {
-        transform: translateY(-5px) !important; /* Efeito de flutuar ao passar o mouse */
-        border-color: #E3000F !important;
-    }
+    div[data-testid="metric-container"]:hover { transform: translateY(-5px) !important; }
 
-    /* 3. Botões Estilizados */
     .stButton>button { 
-        width: 100%; 
-        border-radius: 10px !important; 
-        font-weight: 600 !important; 
-        height: 3rem !important;
-        background-color: #E3000F !important; 
-        color: white !important; 
-        border: none !important;
-        transition: all 0.3s ease !important;
-        letter-spacing: 0.5px !important;
+        width: 100%; border-radius: 10px !important; font-weight: 600 !important; 
+        height: 3rem !important; background-color: #E3000F !important; color: white !important; 
+        border: none !important; transition: all 0.3s ease !important;
     }
-    .stButton>button:hover { 
-        background-color: #BA000C !important;
-        box-shadow: 0 10px 15px -3px rgba(227, 0, 15, 0.3) !important;
-    }
-
-    /* 4. Inputs e Áreas de Texto */
-    /* Bordas mais finas e arredondadas para os campos de entrada */
-    .stTextArea textarea, .stTextInput input {
-        border-radius: 10px !important;
-        border: 1px solid rgba(128, 128, 128, 0.3) !important;
-    }
-
-    /* 5. Abas (Tabs) Modernas */
-    /* Removemos o visual pesado e focamos em uma linha de seleção limpa */
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 8px !important;
-    }
-    .stTabs [data-baseweb="tab"] {
-        background-color: transparent !important;
-        border-radius: 8px 8px 0 0 !important;
-        padding: 10px 20px !important;
-        font-weight: 600 !important;
-    }
-    .stTabs [aria-selected="true"] {
-        color: #E3000F !important;
-        border-bottom: 3px solid #E3000F !important;
-    }
-
-    /* 6. Barra Lateral (Sidebar) */
-    section[data-testid="stSidebar"] {
-        border-right: 1px solid rgba(128, 128, 128, 0.1) !important;
-    }
+    .stButton>button:hover { background-color: #BA000C !important; box-shadow: 0 10px 15px -3px rgba(227, 0, 15, 0.3) !important; }
     
-    /* 7. Barra de Progresso Arredondada */
-    .stProgress > div > div {
-        border-radius: 20px !important;
-        height: 10px !important;
-    }
-    .stProgress > div > div > div > div {
-        background-color: #E3000F !important;
-        border-radius: 20px !important;
-    }
+    .stTextArea textarea, .stTextInput input { border-radius: 10px !important; }
+    .stTabs [data-baseweb="tab-list"] { gap: 8px !important; }
+    .stTabs [data-baseweb="tab"] { background-color: transparent !important; padding: 10px 20px !important; font-weight: 600 !important; }
+    .stTabs [aria-selected="true"] { color: #E3000F !important; border-bottom: 3px solid #E3000F !important; }
+    .stProgress > div > div > div > div { background-color: #E3000F !important; border-radius: 20px !important; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -128,7 +75,22 @@ try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
     ai_model = genai.GenerativeModel('gemini-1.5-flash')
 except:
-    st.error("Erro nas chaves de API (Gemini ou Supabase). Verifique os Secrets.")
+    st.error("Erro nas chaves de API. Verifique os Secrets.")
+
+# ── Função dos Cards (KPIs) ───────────────────────────────────────────────────
+def renderizar_kpis(df):
+    st.markdown("---")
+    col1, col2, col3, col4 = st.columns(4)
+    total = len(df)
+    sucesso = (df["status"] == "OK").sum() if "status" in df.columns else 0
+    erros = total - sucesso
+    economizados = (df["fonte_api"] == "⚡ Memória Local (DB)").sum() if "fonte_api" in df.columns else 0
+    
+    col1.metric("📍 Total Processado", f"{total:,}".replace(',', '.'))
+    col2.metric("✅ Sucesso", f"{sucesso:,}".replace(',', '.'))
+    col3.metric("⚠️ Erros", f"{erros:,}".replace(',', '.'))
+    col4.metric("⚡ Puxados do Banco", f"{economizados:,}".replace(',', '.'))
+    st.markdown("---")
 
 # ── Motor de Dados ────────────────────────────────────────────────────────────
 COLUNAS_FAIXA = {"area_nome": "Nome de área de unidade", "area_codigo": "Código de área de unidade", "estacao": "Número da sua estação", "pdd": "PDD pertencente", "cep_ini": "CEP inicial", "cep_fim": "CEP final"}
@@ -171,7 +133,7 @@ async def obter_cep(session, cep, bruto=""):
             dados["fonte_api"] = "🧠 GEMINI AI"
         except: pass
 
-    # Salvar no Cache
+    # Salvar no Cache - MODIFICAÇÃO FEITA AQUI PARA PEGAR O ERRO 👇
     if "status" not in dados:
         try:
             await asyncio.to_thread(lambda: supabase.table("cache_ceps").upsert({
@@ -179,7 +141,9 @@ async def obter_cep(session, cep, bruto=""):
                 "localidade": dados.get("cidade"), "uf": dados.get("estado"),
                 "lat": str(dados.get("lat", "")), "lon": str(dados.get("lon", ""))
             }).execute())
-        except: pass
+        except Exception as e:
+            # Essa linha vai fazer o Streamlit "cuspir" o erro no terminal!
+            print(f"🚨 ERRO AO SALVAR O CEP {cep} NO SUPABASE: {e}") 
     
     return dados
 
@@ -206,14 +170,7 @@ async def processar_lote(ceps, df_faixas, prog_bar):
                             match = df_faixas[(df_faixas["cep_ini"] <= int(c_limpo)) & (df_faixas["cep_fim"] >= int(c_limpo))]
                             if not match.empty:
                                 r = match.iloc[0]
-                                jt = {
-                                    "jt_area_nome": normalizar(r["area_nome"]), 
-                                    "jt_area_codigo": r["area_codigo"], 
-                                    "jt_estacao": r["estacao"], 
-                                    "jt_pdd": r["pdd"],
-                        "jt_faixa_inicial": r["cep_ini"],
-                        "jt_faixa_final": r["cep_fim"]
-                                }
+                                jt = {"jt_area_nome": normalizar(r["area_nome"]), "jt_area_codigo": r["area_codigo"], "jt_estacao": r["estacao"], "jt_pdd": r["pdd"], "jt_faixa_inicial": r["cep_ini"], "jt_faixa_final": r["cep_fim"]}
                         
                         return {
                             "cep_input": raw, "cep_formatado": formatar_cep_hifen(c_limpo),
@@ -242,8 +199,13 @@ t1, t2, t3 = st.tabs(["📝 Pesquisa Avulsa", "📂 Lote (Planilha)", "📏 Malh
 with t1:
     txt = st.text_area("CEPs (um por linha):", height=150)
     if st.button("🚀 Processar Avulsos") and txt:
+        t0 = time.time()
         res = asyncio.run(processar_lote(txt.split("\n"), df_faixas, st.progress(0)))
         df = pd.DataFrame(res)
+        
+        st.success(f"⏱️ Tempo de Processamento: {formatar_tempo(time.time() - t0)}")
+        renderizar_kpis(df)
+        
         st.dataframe(df, use_container_width=True)
         buf = io.BytesIO()
         df.to_excel(buf, index=False)
@@ -255,8 +217,14 @@ with t2:
         df_p = pd.read_excel(arq_p)
         col = st.selectbox("Coluna do CEP:", df_p.columns)
         if st.button("🚀 Processar Planilha"):
+            t0 = time.time()
             res = asyncio.run(processar_lote(df_p[col].tolist(), df_faixas, st.progress(0)))
-            df_final = pd.concat([df_p.reset_index(drop=True), pd.DataFrame(res).drop(columns=["cep_input"])], axis=1)
+            df_res = pd.DataFrame(res)
+            df_final = pd.concat([df_p.reset_index(drop=True), df_res.drop(columns=["cep_input"])], axis=1)
+            
+            st.success(f"⏱️ Tempo de Processamento: {formatar_tempo(time.time() - t0)}")
+            renderizar_kpis(df_res)
+            
             st.dataframe(df_final.head(100))
             buf = io.BytesIO()
             df_final.to_excel(buf, index=False)
@@ -265,6 +233,7 @@ with t2:
 with t3:
     f_in = st.text_area("Pares Início Fim (ex: 66080000 66080100)", height=150)
     if st.button("🚀 Expandir Malha"):
+        t0 = time.time()
         lista = []
         for l in f_in.strip().split("\n"):
             p = l.split()
@@ -272,6 +241,10 @@ with t3:
                 for c in range(int(re.sub(r"\D","",p[0])), int(re.sub(r"\D","",p[1]))+1): lista.append(str(c).zfill(8))
         res = asyncio.run(processar_lote(lista, df_faixas, st.progress(0)))
         df = pd.DataFrame(res)
+        
+        st.success(f"⏱️ Tempo de Processamento: {formatar_tempo(time.time() - t0)}")
+        renderizar_kpis(df)
+        
         st.dataframe(df)
         buf = io.BytesIO()
         df.to_excel(buf, index=False)
