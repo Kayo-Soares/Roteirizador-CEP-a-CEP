@@ -42,10 +42,83 @@ with st.expander("📖 Guia Rápido: Como usar a ferramenta", expanded=False):
 # Estilo J&T
 st.markdown("""
     <style>
-    .stButton>button { width: 100%; background-color: #E3000F; color: white; font-weight: 700; }
-    .stButton>button:hover { background-color: #BA000C; color: white; }
-    div[data-testid="metric-container"] { border-left: 5px solid #E3000F; background-color: rgba(128,128,128,0.1); padding: 10px; }
-    .stProgress > div > div > div > div { background-color: #E3000F !important; }
+    /* 1. Ajuste de Espaçamento e Fonte */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
+    
+    .block-container { 
+        padding-top: 2rem; 
+        max-width: 95%; 
+    }
+
+    /* 2. Cards de KPI (Métricas) Modernos */
+    /* Criamos uma sombra suave e bordas arredondadas para dar profundidade */
+    div[data-testid="metric-container"] { 
+        background-color: rgba(255, 255, 255, 0.05) !important; /* Leve transparência que funciona em qualquer fundo */
+        border: 1px solid rgba(128, 128, 128, 0.2) !important;
+        border-radius: 12px !important;
+        padding: 20px !important;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06) !important;
+        transition: transform 0.2s ease-in-out !important;
+    }
+    div[data-testid="metric-container"]:hover {
+        transform: translateY(-5px) !important; /* Efeito de flutuar ao passar o mouse */
+        border-color: #E3000F !important;
+    }
+
+    /* 3. Botões Estilizados */
+    .stButton>button { 
+        width: 100%; 
+        border-radius: 10px !important; 
+        font-weight: 600 !important; 
+        height: 3rem !important;
+        background-color: #E3000F !important; 
+        color: white !important; 
+        border: none !important;
+        transition: all 0.3s ease !important;
+        letter-spacing: 0.5px !important;
+    }
+    .stButton>button:hover { 
+        background-color: #BA000C !important;
+        box-shadow: 0 10px 15px -3px rgba(227, 0, 15, 0.3) !important;
+    }
+
+    /* 4. Inputs e Áreas de Texto */
+    /* Bordas mais finas e arredondadas para os campos de entrada */
+    .stTextArea textarea, .stTextInput input {
+        border-radius: 10px !important;
+        border: 1px solid rgba(128, 128, 128, 0.3) !important;
+    }
+
+    /* 5. Abas (Tabs) Modernas */
+    /* Removemos o visual pesado e focamos em uma linha de seleção limpa */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 8px !important;
+    }
+    .stTabs [data-baseweb="tab"] {
+        background-color: transparent !important;
+        border-radius: 8px 8px 0 0 !important;
+        padding: 10px 20px !important;
+        font-weight: 600 !important;
+    }
+    .stTabs [aria-selected="true"] {
+        color: #E3000F !important;
+        border-bottom: 3px solid #E3000F !important;
+    }
+
+    /* 6. Barra Lateral (Sidebar) */
+    section[data-testid="stSidebar"] {
+        border-right: 1px solid rgba(128, 128, 128, 0.1) !important;
+    }
+    
+    /* 7. Barra de Progresso Arredondada */
+    .stProgress > div > div {
+        border-radius: 20px !important;
+        height: 10px !important;
+    }
+    .stProgress > div > div > div > div {
+        background-color: #E3000F !important;
+        border-radius: 20px !important;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -133,7 +206,14 @@ async def processar_lote(ceps, df_faixas, prog_bar):
                             match = df_faixas[(df_faixas["cep_ini"] <= int(c_limpo)) & (df_faixas["cep_fim"] >= int(c_limpo))]
                             if not match.empty:
                                 r = match.iloc[0]
-                                jt = {"jt_area_nome": normalizar(r["area_nome"]), "jt_area_codigo": r["area_codigo"], "jt_estacao": r["estacao"], "jt_pdd": r["pdd"]}
+                                jt = {
+                                    "jt_area_nome": normalizar(r["area_nome"]), 
+                                    "jt_area_codigo": r["area_codigo"], 
+                                    "jt_estacao": r["estacao"], 
+                                    "jt_pdd": r["pdd"],
+                        "jt_faixa_inicial": r["cep_ini"],
+                        "jt_faixa_final": r["cep_fim"]
+                                }
                         
                         return {
                             "cep_input": raw, "cep_formatado": formatar_cep_hifen(c_limpo),
