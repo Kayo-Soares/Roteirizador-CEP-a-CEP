@@ -3,3 +3,4 @@ pandas
 aiohttp
 google-generativeai
 openpyxl
+supabase
