@@ -5,17 +5,19 @@ import sqlite3
 import unicodedata
 import asyncio
 import aiohttp
+import gc  # Para limpeza de memória
 import google.generativeai as genai
 from datetime import datetime, timedelta
-
 import pandas as pd
+import streamlit as st
+
+# ── Funções de Apoio ──────────────────────────────────────────────────────────
 def formatar_tempo(tempo_em_segundos):
     minutos = int(tempo_em_segundos // 60)
     segundos = tempo_em_segundos % 60
     if minutos > 0:
         return f"{minutos}m {segundos:.2f}s"
     return f"{segundos:.2f}s"
-import streamlit as st
 
 # ── Configurações de Interface ────────────────────────────────────────────────
 st.set_page_config(page_title="Roteirizador J&T Express", layout="wide", page_icon="🚚")
@@ -25,49 +27,30 @@ st.markdown("""
     #MainMenu {visibility: hidden;} footer {visibility: hidden;}
     .block-container { padding-top: 2rem; padding-bottom: 2rem; }
     
-    /* Botões Padrão J&T Express */
     .stButton>button { 
-        width: 100%; 
-        border-radius: 8px; 
-        font-weight: 700; 
-        background-color: #E3000F; 
-        color: white; 
-        border: none; 
-        transition: 0.3s; 
+        width: 100%; border-radius: 8px; font-weight: 700; 
+        background-color: #E3000F; color: white; border: none; transition: 0.3s; 
     }
     .stButton>button:hover { 
-        background-color: #BA000C;
-        transform: translateY(-2px); 
+        background-color: #BA000C; transform: translateY(-2px); 
         box-shadow: 0 4px 10px rgba(227, 0, 15, 0.3); 
     }
     
-    /* Painéis de Indicadores (KPIs) com barra lateral vermelha */
     div[data-testid="metric-container"] { 
-        background-color: rgba(128, 128, 128, 0.1); 
-        border-radius: 10px; 
-        padding: 15px; 
-        border-left: 5px solid #E3000F; 
+        background-color: rgba(128, 128, 128, 0.1); border-radius: 10px; 
+        padding: 15px; border-left: 5px solid #E3000F; 
     }
     
-    /* Destacar os títulos das abas */
     .stTabs [data-baseweb="tab-list"] button [data-testid="stMarkdownContainer"] p {
-        font-size: 1.1rem;
-        font-weight: 600;
-            
-    /* Forçar Barra de Progresso Vermelha J&T */
+        font-size: 1.1rem; font-weight: 600;
+    }
+
+    /* Barra de Progresso Vermelha J&T */
     .stProgress > div > div > div > div {
         background-color: #E3000F !important;
     }        
-
     </style>
 """, unsafe_allow_html=True)
-
-# ── Integração Gemini via Secrets ─────────────────────────────────────────────
-try:
-    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    ai_model = genai.GenerativeModel('gemini-1.5-flash')
-except Exception as e:
-    st.error("Erro ao configurar API do Gemini. Verifique o arquivo .streamlit/secrets.toml.")
 
 # ── Configurações de Motor ────────────────────────────────────────────────────
 MAX_CONEXOES = 50 
@@ -104,14 +87,19 @@ def limpar_cep(cep: str) -> str | None:
     return limpo if len(limpo) == 8 else None
 
 # ── Inteligência de IA Fallback ────────────────────────────────────────────────
+try:
+    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+    ai_model = genai.GenerativeModel('gemini-1.5-flash')
+except:
+    st.error("Erro na API Gemini.")
+
 async def corrigir_endereco_ia(texto_bruto: str) -> dict:
     prompt = f"Aja como roteirizador. Extraia JSON do endereço: '{texto_bruto}'. Chaves: 'logradouro', 'bairro', 'localidade', 'uf'. Tudo em MAIÚSCULO e sem acentos. Retorne apenas o JSON."
     try:
         response = await asyncio.to_thread(ai_model.generate_content, prompt)
         res_clean = response.text.replace('```json', '').replace('```', '').strip()
         return eval(res_clean)
-    except:
-        return {"erro": "Falha na IA"}
+    except: return {"erro": "Falha na IA"}
 
 # ── Motor de Busca ────────────────────────────────────────────────────────────
 async def consultar_apis_async(session, cep):
@@ -121,14 +109,6 @@ async def consultar_apis_async(session, cep):
                 d = await resp.json()
                 return {"logradouro": normalizar_texto(d.get("street")), "bairro": normalizar_texto(d.get("neighborhood")), "localidade": normalizar_texto(d.get("city")), "uf": normalizar_texto(d.get("state")), "api": "BrasilAPI"}
     except: pass
-    
-    try:
-        async with session.get(f"https://cep.awesomeapi.com.br/json/{cep}", timeout=TIMEOUT_POR_API) as resp:
-            if resp.status == 200:
-                d = await resp.json()
-                return {"logradouro": normalizar_texto(d.get("address")), "bairro": normalizar_texto(d.get("district")), "localidade": normalizar_texto(d.get("city")), "uf": normalizar_texto(d.get("state")), "api": "AwesomeAPI"}
-    except: pass
-
     return {"erro": "Nao encontrado"}
 
 async def obter_dados_cep(session, cep, bruto=""):
@@ -141,12 +121,9 @@ async def obter_dados_cep(session, cep, bruto=""):
         return {"logradouro": cache[0], "bairro": cache[1], "localidade": cache[2], "uf": cache[3], "api": "⚡ CACHE"}
 
     dados = await consultar_apis_async(session, cep)
-    
-    # SÓ ACIONA A IA SE O TEXTO ORIGINAL TIVER LETRAS (Não aciona para CEPs vazios gerados no Modo Faixa)
     if "erro" in dados and bruto and not bruto.isnumeric():
         dados = await corrigir_endereco_ia(bruto)
-        if "erro" not in dados:
-            dados["api"] = "🧠 GEMINI AI"
+        if "erro" not in dados: dados["api"] = "🧠 GEMINI AI"
 
     if "erro" not in dados:
         if not dados.get("logradouro"): dados["logradouro"] = "CEP GERAL"
@@ -156,43 +133,49 @@ async def obter_dados_cep(session, cep, bruto=""):
                 conn.execute("INSERT OR REPLACE INTO cache_ceps VALUES (?,?,?,?,?,?)", 
                              (cep, dados.get("logradouro"), dados.get("bairro"), dados.get("localidade"), dados.get("uf"), datetime.now().isoformat()))
         await asyncio.to_thread(salvar)
-    
     return dados
 
 def encontrar_faixa_jt(cep_num, df_faixas):
     if df_faixas is None: return {}
     match = df_faixas[(df_faixas["cep_ini"] <= cep_num) & (df_faixas["cep_fim"] >= cep_num)]
-    if match.empty: return {"jt_area": "NAO MAPEADO", "jt_cep_inicial_faixa": None, "jt_cep_final_faixa": None}
+    if match.empty: return {"jt_area": "NAO MAPEADO"}
     row = match.iloc[0]
-    return {
-        "jt_area": normalizar_texto(row.get("area_nome")),
-        "jt_estacao": row.get("estacao"),
-        "jt_pdd": row.get("pdd"),
-        "jt_cep_inicial_faixa": row.get("cep_ini"),
-        "jt_cep_final_faixa": row.get("cep_fim")
-    }
+    return {"jt_area": normalizar_texto(row.get("area_nome")), "jt_estacao": row.get("estacao"), "jt_pdd": row.get("pdd")}
 
-async def processar_lote(ceps, df_faixas, progresso, status):
+# ── NOVO: Processamento Robusto com Chunks ────────────────────────────────────
+async def processar_lote(ceps, df_faixas, progresso_bar, status_text):
+    TAMANHO_CHUNK = 2000 # Processa de 2k em 2k para não estourar a RAM
     semaphore = asyncio.Semaphore(MAX_CONEXOES)
     registros = []
+    total = len(ceps)
+    
     async with aiohttp.ClientSession() as session:
-        tasks = []
-        for c in ceps:
-            async def t(cep_raw):
-                async with semaphore:
-                    limpo = limpar_cep(cep_raw)
-                    if not limpo: return {"cep_input": cep_raw, "status": "INVALIDO"}
-                    d = await obter_dados_cep(session, limpo, bruto=cep_raw)
-                    res = {"cep_input": cep_raw, "status": "OK" if "erro" not in d else d["erro"], **d}
-                    res.update(encontrar_faixa_jt(int(limpo), df_faixas))
-                    return res
-            tasks.append(t(c))
-        
-        for i, f in enumerate(asyncio.as_completed(tasks)):
-            registros.append(await f)
-            if i % 10 == 0 or i == len(ceps) - 1:
-                progresso.progress((i+1)/len(ceps))
-                status.markdown(f"**Processando:** `{i+1} / {len(ceps)}`")
+        for i in range(0, total, TAMANHO_CHUNK):
+            chunk = ceps[i : i + TAMANHO_CHUNK]
+            tasks = []
+            
+            for c in chunk:
+                async def t(cep_raw):
+                    async with semaphore:
+                        limpo = limpar_cep(cep_raw)
+                        if not limpo: return {"cep_input": cep_raw, "status": "INVALIDO"}
+                        d = await obter_dados_cep(session, limpo, bruto=cep_raw)
+                        res = {"cep_input": cep_raw, "status": "OK" if "erro" not in d else d["erro"], **d}
+                        res.update(encontrar_faixa_jt(int(limpo), df_faixas))
+                        return res
+                tasks.append(t(c))
+            
+            # Executa o chunk atual
+            for j, f in enumerate(asyncio.as_completed(tasks)):
+                registros.append(await f)
+                
+                # Atualização Visual
+                atual = i + j + 1
+                porcentagem = int((atual / total) * 100)
+                progresso_bar.progress(atual / total, text=f"📊 Processando: {porcentagem}% ({atual:,} / {total:,})")
+            
+            gc.collect() # Limpa a memória após cada bloco de 2000
+            
     return registros
 
 def renderizar_kpis(df):
@@ -205,31 +188,19 @@ def renderizar_kpis(df):
     
     col1.metric("📍 Total Processado", f"{total:,}".replace(',', '.'))
     col2.metric("✅ Sucesso (Encontrados)", f"{sucesso:,}".replace(',', '.'))
-    col3.metric("⚠️ Inexistentes/Erros", f"{erros:,}".replace(',', '.'))
+    col3.metric("⚠️ Erros", f"{erros:,}".replace(',', '.'))
     col4.metric("⚡ Puxados do Cache", f"{economizados:,}".replace(',', '.'))
     st.markdown("---")
 
 # ── Interface Principal ───────────────────────────────────────────────────────
-st.title("🚚 Painel de Roteirização J&T Express")
-# --- NOVO: Guia de Uso ---
+st.title("📦 Sistema de Roteirização | J&T Express")
+
 with st.expander("📖 Guia Rápido: Como usar a ferramenta", expanded=False):
-    st.markdown("""
-    **Bem-vindo a Roteirização!** Esta ferramenta cruza os CEPs diretamente do 3º segmento **faixa de cep**.Assim podemos ver qual cidade, bairro um cep unico ou faixa pertencem
+    st.markdown("Instruções de uso para Pesquisa Avulsa, Lote e Malha.")
 
-    ### 🛠️ Passo a Passo
-    1. **Carregue a base do 3º Segmento Faixa de CEP:** No menu lateral esquerdo, suba o arquivo Excel (`.xlsx`) atualizado com as faixas de CEP da J&T.
-    2. **Escolha o seu fluxo de trabalho:**
-       * **📝 Pesquisa Avulsa:** Ideal para testar 1 ou até 20 CEPs rapidamente. Digite um abaixo do outro e processe.
-       * **📂 Lote (Planilha):** Suba a planilha do sistema com todos os pedidos do dia, escolha qual coluna tem os CEPs e deixe o motor processar milhares de linhas de uma vez.
-       * **📏 Malha (Faixas):** Cole o CEP Inicial e o Final de uma rota, e o sistema testará todos os números no meio para validar a cobertura.
-    3. **Baixe o Resultado:** O sistema vai gerar um novo arquivo Excel idêntico ao seu, mas com as colunas de Logradouro, Bairro, Área J&T (ex: VGA-PA) e Estação preenchidas.
-
-    *💡 Dica: O sistema possui "memória". CEPs processados hoje retornarão instantaneamente amanhã!*
-    """)
-# -------------------------
 with st.sidebar:
     st.header("⚙️ Base Logística")
-    arq = st.file_uploader("**Subir Faixas Terceiro segmento Faixa de Cep J&T (.xlsx)**", type=["xlsx", "xls"])
+    arq = st.file_uploader("**Subir Faixas Terceiro segmento J&T (.xlsx)**", type=["xlsx", "xls"])
     df_faixas = None
     if arq:
         df_faixas = pd.read_excel(arq).rename(columns={v: k for k, v in COLUNAS_FAIXA.items()})
@@ -246,21 +217,18 @@ with tab1:
         txt = st.text_area("CEPs (um por linha):", height=200)
         btn1 = st.button("🚀 Processar Avulsos", use_container_width=True)
     with col2:
-        if btn1:
+        if btn1 and txt.strip():
             ceps = [c.strip() for c in txt.split("\n") if c.strip()]
-            if ceps:
-                progresso, status = st.progress(0), st.empty()
-                t0 = time.time()
-                res = asyncio.run(processar_lote(ceps, df_faixas, progresso, status))
-                df_res = pd.DataFrame(res)
-                tempo_total = time.time() - t0
-                status.success(f"⚡ Tempo: {time.time()-t0:.2f}s")
-                renderizar_kpis(df_res)
-                st.dataframe(df_res, use_container_width=True)
-                
-                buf = io.BytesIO()
-                df_res.to_excel(buf, index=False)
-                st.download_button("📥 Baixar Relatório", buf.getvalue(), "avulso.xlsx", use_container_width=True)
+            progresso_bar = st.progress(0)
+            t0 = time.time()
+            res = asyncio.run(processar_lote(ceps, df_faixas, progresso_bar, None))
+            df_res = pd.DataFrame(res)
+            st.success(f"⚡ Tempo: {formatar_tempo(time.time()-t0)}")
+            renderizar_kpis(df_res)
+            st.dataframe(df_res, use_container_width=True)
+            buf = io.BytesIO()
+            df_res.to_excel(buf, index=False)
+            st.download_button("📥 Baixar Relatório", buf.getvalue(), "avulso.xlsx", use_container_width=True)
 
 # ABA 2: PLANILHA
 with tab2:
@@ -274,21 +242,14 @@ with tab2:
     with col2:
         if arq_p and btn2:
             ceps = df_p[col].astype(str).tolist()
-            progresso, status = st.progress(0), st.empty()
+            progresso_bar = st.progress(0)
             t0 = time.time()
-            res = asyncio.run(processar_lote(ceps, df_faixas, progresso, status))
-            
+            res = asyncio.run(processar_lote(ceps, df_faixas, progresso_bar, None))
             df_consulta = pd.DataFrame(res)
-            df_consulta['ordem_original'] = df_consulta['cep_input'].map({c: i for i, c in enumerate(ceps)})
-            df_consulta = df_consulta.drop_duplicates(subset=['cep_input']).set_index('ordem_original').sort_index()
-            df_consulta = df_consulta.drop(columns=["cep_input", "erro"], errors="ignore")
-            
-            df_final = pd.concat([df_p.reset_index(drop=True), df_consulta.reset_index(drop=True)], axis=1)
-            tempo_total = time.time() - t0
-            status.success(f"⚡ Tempo: {time.time()-t0:.2f}s")
+            df_final = pd.concat([df_p.reset_index(drop=True), df_consulta.drop(columns=["cep_input"], errors="ignore")], axis=1)
+            st.success(f"⚡ Tempo: {formatar_tempo(time.time()-t0)}")
             renderizar_kpis(df_consulta)
             st.dataframe(df_final.head(100), use_container_width=True)
-            
             buf = io.BytesIO()
             df_final.to_excel(buf, index=False)
             st.download_button("📥 Baixar Planilha Enriquecida", buf.getvalue(), "pedidos_enriquecidos.xlsx", use_container_width=True)
@@ -300,7 +261,7 @@ with tab3:
         faixas_input = st.text_area("Pares (Início Fim):", height=200, placeholder="66093001 66093629")
         btn3 = st.button("🚀 Expandir Malha", use_container_width=True)
     with col2:
-        if btn3:
+        if btn3 and faixas_input.strip():
             linhas = faixas_input.strip().split('\n')
             ceps_para_consultar = []
             for linha in linhas:
@@ -311,18 +272,14 @@ with tab3:
                         for c in range(int(ini), int(fim) + 1):
                             ceps_para_consultar.append(str(c).zfill(8))
             
-            if not ceps_para_consultar:
-                st.error("Nenhuma faixa válida identificada.")
-            else:
-                progresso, status = st.progress(0), st.empty()
+            if ceps_para_consultar:
+                progresso_bar = st.progress(0)
                 t0 = time.time()
-                res = asyncio.run(processar_lote(ceps_para_consultar, df_faixas, progresso, status))
-                df_res_faixas = pd.DataFrame(res).sort_values(by="cep_input").reset_index(drop=True)
-                tempo_total = time.time() - t0
-                status.success(f"⚡ Tempo: {time.time()-t0:.2f}s")
+                res = asyncio.run(processar_lote(ceps_para_consultar, df_faixas, progresso_bar, None))
+                df_res_faixas = pd.DataFrame(res).sort_values(by="cep_input")
+                st.success(f"⚡ Tempo: {formatar_tempo(time.time()-t0)}")
                 renderizar_kpis(df_res_faixas)
                 st.dataframe(df_res_faixas, use_container_width=True)
-                
                 buf = io.BytesIO()
                 df_res_faixas.to_excel(buf, index=False)
                 st.download_button("📥 Baixar Malha", buf.getvalue(), "malha_expandida.xlsx", use_container_width=True)
