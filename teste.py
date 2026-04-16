@@ -6,6 +6,7 @@ import asyncio
 import aiohttp
 import gc
 import google.generativeai as genai
+import json
 from datetime import datetime
 from supabase import create_client, Client
 import pandas as pd
@@ -37,7 +38,7 @@ with st.expander("📖 Guia Rápido: Como usar a ferramenta", expanded=False):
     3. **Resultado:** O sistema retorna Logradouro, Bairro, Cidade, Estado, Lat/Lon e a Unidade J&T.
     """)
 
-# CSS Moderno (Cards com sombra, botões arredondados)
+# CSS Moderno
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
@@ -84,7 +85,7 @@ def renderizar_kpis(df):
     total = len(df)
     sucesso = (df["status"] == "OK").sum() if "status" in df.columns else 0
     erros = total - sucesso
-    economizados = (df["fonte_api"] == "⚡ Memória Local (DB)").sum() if "fonte_api" in df.columns else 0
+    economizados = (df["fonte_api"].str.contains("⚡", na=False)).sum() if "fonte_api" in df.columns else 0
     
     col1.metric("📍 Total Processado", f"{total:,}".replace(',', '.'))
     col2.metric("✅ Sucesso", f"{sucesso:,}".replace(',', '.'))
@@ -100,54 +101,86 @@ def normalizar(t):
 
 async def consultar_api(session, cep):
     try:
-        async with session.get(f"https://brasilapi.com.br/api/cep/v1/{cep}", timeout=8) as r:
+        async with session.get(f"https://brasilapi.com.br/api/cep/v2/{cep}", timeout=8) as r:
             if r.status == 200:
                 d = await r.json()
                 loc = d.get("location", {}).get("coordinates", {})
                 return {
-                    "logradouro": normalizar(d.get("street")), "bairro": normalizar(d.get("neighborhood")),
-                    "cidade": normalizar(d.get("city")), "estado": normalizar(d.get("state")),
-                    "lat": loc.get("latitude"), "lon": loc.get("longitude"), "fonte_api": "BrasilAPI"
+                    "logradouro": normalizar(d.get("street")), 
+                    "bairro": normalizar(d.get("neighborhood")),
+                    "cidade": normalizar(d.get("city")), 
+                    "estado": normalizar(d.get("state")),
+                    "lat": str(loc.get("latitude", "")), 
+                    "lon": str(loc.get("longitude", "")), 
+                    "fonte_api": "BrasilAPI"
                 }
     except: pass
     return {"status": "CEP NAO ENCONTRADO"}
 
 async def obter_cep(session, cep, bruto=""):
-    # Cache Supabase
+    # 1. Tentar Cache no Supabase
     try:
         res = await asyncio.to_thread(lambda: supabase.table("cache_ceps").select("*").eq("cep", cep).execute())
         if res.data:
-            d = res.data[0]
-            return {**d, "fonte_api": "⚡ Memória Local (DB)"}
-    except: pass
+            item = res.data[0]
+            # Se tem endereço E lat/lon válida, retorna direto
+            if item.get("lat") and item.get("lat") not in ["None", "0.0", ""]:
+                return {
+                    "logradouro": item.get("logradouro"), "bairro": item.get("bairro"),
+                    "cidade": item.get("localidade"), "estado": item.get("uf"),
+                    "lat": item.get("lat"), "lon": item.get("lon"), "fonte_api": "⚡ Memória Local (DB)"
+                }
+            dados_base = {
+                "logradouro": item.get("logradouro"), "bairro": item.get("bairro"),
+                "cidade": item.get("localidade"), "estado": item.get("uf"),
+                "lat": item.get("lat"), "lon": item.get("lon")
+            }
+        else: dados_base = None
+    except: dados_base = None
 
-    # API Pública
-    dados = await consultar_api(session, cep)
-    
-    # Gemini Fallback
-    if "status" in dados and bruto and not bruto.isnumeric():
+    # 2. Se não estava no banco ou faltava dado, buscar na BrasilAPI
+    if not dados_base or not dados_base.get("logradouro"):
+        api_res = await consultar_api(session, cep)
+        if "status" not in api_res:
+            dados_base = api_res
+        else:
+            # Tentar Gemini se a BrasilAPI falhar e tivermos texto bruto
+            if bruto and not bruto.isnumeric():
+                try:
+                    p = f"Extraia JSON do endereço: '{bruto}'. Chaves: logradouro, bairro, cidade, estado, lat, lon. Tudo MAIUSCULO."
+                    resp = await asyncio.to_thread(ai_model.generate_content, p)
+                    dados_base = json.loads(resp.text.replace('```json', '').replace('```', '').strip())
+                    dados_base["fonte_api"] = "🤖 IA (Texto Bruto)"
+                except: return {"status": "CEP NAO ENCONTRADO"}
+            else: return {"status": "CEP NAO ENCONTRADO"}
+
+    # 3. Geocodificação de Emergência (Gemini) se a lat/lon estiver vazia
+    if not dados_base.get("lat") or dados_base.get("lat") in ["None", "0.0", ""]:
         try:
-            p = f"Extraia JSON do endereço: '{bruto}'. Chaves: logradouro, bairro, cidade, estado. Tudo MAIUSCULO."
-            resp = await asyncio.to_thread(ai_model.generate_content, p)
-            dados = eval(resp.text.replace('```json', '').replace('```', '').strip())
-            dados["fonte_api"] = "🧠 GEMINI AI"
+            endereco = f"{dados_base.get('logradouro')}, {dados_base.get('bairro')}, {dados_base.get('cidade')} - {dados_base.get('estado')}"
+            prompt = f"Retorne apenas um JSON plano com as chaves 'lat' e 'lon' para o endereço: {endereco}. Se não souber a rua, use o centro do bairro."
+            response = await asyncio.to_thread(ai_model.generate_content, prompt)
+            geo = json.loads(response.text.replace('```json', '').replace('```', '').strip())
+            dados_base["lat"] = str(geo.get("lat"))
+            dados_base["lon"] = str(geo.get("lon"))
+            dados_base["fonte_api"] = "🧠 Geocodificado por IA"
         except: pass
 
-    # Salvar no Cache - MODIFICAÇÃO FEITA AQUI PARA PEGAR O ERRO 👇
-    if "status" not in dados:
-        try:
-            await asyncio.to_thread(lambda: supabase.table("cache_ceps").upsert({
-                "cep": cep, "logradouro": dados.get("logradouro"), "bairro": dados.get("bairro"),
-                "localidade": dados.get("cidade"), "uf": dados.get("estado"),
-                "lat": str(dados.get("lat", "")), "lon": str(dados.get("lon", ""))
-            }).execute())
-        except Exception as e:
-            # Essa linha vai fazer o Streamlit "cuspir" o erro no terminal!
-            print(f"🚨 ERRO AO SALVAR O CEP {cep} NO SUPABASE: {e}") 
-    
-    return dados
+    if "fonte_api" not in dados_base: dados_base["fonte_api"] = "🌐 BrasilAPI"
 
-# ── Processamento ─────────────────────────────────────────────────────────────
+    # 4. Salvar/Atualizar no Supabase
+    try:
+        await asyncio.to_thread(lambda: supabase.table("cache_ceps").upsert({
+            "cep": cep, "logradouro": dados_base.get("logradouro"), "bairro": dados_base.get("bairro"),
+            "localidade": dados_base.get("cidade"), "uf": dados_base.get("estado"),
+            "lat": str(dados_base.get("lat", "")), "lon": str(dados_base.get("lon", ""))
+        }).execute())
+    except Exception as e:
+        print(f"🚨 ERRO SUPABASE: {e}")
+    
+    return dados_base
+
+# ── Processamento em Lote ─────────────────────────────────────────────────────
 async def processar_lote(ceps, df_faixas, prog_bar):
     TAM_CHUNK = 2000
     sem = asyncio.Semaphore(50)
@@ -164,17 +197,17 @@ async def processar_lote(ceps, df_faixas, prog_bar):
                         if len(c_limpo) != 8: return {"cep_input": raw, "status": "INVALIDO"}
                         d = await obter_cep(session, c_limpo, raw)
                         
-                        # Cruzamento J&T
                         jt = {"jt_area_nome": "NAO MAPEADO"}
-                        if df_faixas is not None:
-                            match = df_faixas[(df_faixas["cep_ini"] <= int(c_limpo)) & (df_faixas["cep_fim"] >= int(c_limpo))]
+                        if df_faixas is not None and d.get("status") != "CEP NAO ENCONTRADO":
+                            c_int = int(c_limpo)
+                            match = df_faixas[(df_faixas["cep_ini"] <= c_int) & (df_faixas["cep_fim"] >= c_int)]
                             if not match.empty:
                                 r = match.iloc[0]
                                 jt = {"jt_area_nome": normalizar(r["area_nome"]), "jt_area_codigo": r["area_codigo"], "jt_estacao": r["estacao"], "jt_pdd": r["pdd"], "jt_faixa_inicial": r["cep_ini"], "jt_faixa_final": r["cep_fim"]}
                         
                         return {
                             "cep_input": raw, "cep_formatado": formatar_cep_hifen(c_limpo),
-                            "status": "OK" if "status" not in d else d["status"],
+                            "status": "OK" if d.get("logradouro") and d.get("logradouro") != "CEP NAO ENCONTRADO" else "ERRO",
                             "logradouro": d.get("logradouro"), "bairro": d.get("bairro"),
                             "cidade": d.get("cidade") or d.get("localidade"), "estado": d.get("estado") or d.get("uf"),
                             "lat": d.get("lat"), "lon": d.get("lon"), "fonte_api": d.get("fonte_api"), **jt
@@ -202,14 +235,9 @@ with t1:
         t0 = time.time()
         res = asyncio.run(processar_lote(txt.split("\n"), df_faixas, st.progress(0)))
         df = pd.DataFrame(res)
-        
-        st.success(f"⏱️ Tempo de Processamento: {formatar_tempo(time.time() - t0)}")
+        st.success(f"⏱️ Tempo: {formatar_tempo(time.time() - t0)}")
         renderizar_kpis(df)
-        
         st.dataframe(df, use_container_width=True)
-        buf = io.BytesIO()
-        df.to_excel(buf, index=False)
-        st.download_button("📥 Baixar Excel", buf.getvalue(), "resultado.xlsx")
 
 with t2:
     arq_p = st.file_uploader("Sua Planilha de Pedidos", type=["xlsx"])
@@ -220,15 +248,12 @@ with t2:
             t0 = time.time()
             res = asyncio.run(processar_lote(df_p[col].tolist(), df_faixas, st.progress(0)))
             df_res = pd.DataFrame(res)
-            df_final = pd.concat([df_p.reset_index(drop=True), df_res.drop(columns=["cep_input"])], axis=1)
-            
-            st.success(f"⏱️ Tempo de Processamento: {formatar_tempo(time.time() - t0)}")
+            st.success(f"⏱️ Tempo: {formatar_tempo(time.time() - t0)}")
             renderizar_kpis(df_res)
-            
-            st.dataframe(df_final.head(100))
+            st.dataframe(df_res.head(100))
             buf = io.BytesIO()
-            df_final.to_excel(buf, index=False)
-            st.download_button("📥 Baixar Planilha Enriquecida", buf.getvalue(), "pedidos_jt.xlsx")
+            df_res.to_excel(buf, index=False)
+            st.download_button("📥 Baixar Resultado", buf.getvalue(), "resultado_jt.xlsx")
 
 with t3:
     f_in = st.text_area("Pares Início Fim (ex: 66080000 66080100)", height=150)
@@ -241,29 +266,6 @@ with t3:
                 for c in range(int(re.sub(r"\D","",p[0])), int(re.sub(r"\D","",p[1]))+1): lista.append(str(c).zfill(8))
         res = asyncio.run(processar_lote(lista, df_faixas, st.progress(0)))
         df = pd.DataFrame(res)
-        
-        st.success(f"⏱️ Tempo de Processamento: {formatar_tempo(time.time() - t0)}")
+        st.success(f"⏱️ Tempo: {formatar_tempo(time.time() - t0)}")
         renderizar_kpis(df)
-        
         st.dataframe(df)
-        buf = io.BytesIO()
-        df.to_excel(buf, index=False)
-        st.download_button("📥 Baixar Malha", buf.getvalue(), "malha_jt.xlsx")
-
-
-        st.sidebar.markdown("---")
-if st.sidebar.button("🛠️ Testar Conexão Supabase"):
-    try:
-        teste_dados = {
-            "cep": "99999999",
-            "logradouro": "Rua do Teste",
-            "bairro": "Bairro Teste",
-            "localidade": "Cidade Teste",
-            "uf": "TS",
-            "lat": "0",
-            "lon": "0"
-        }
-        res = supabase.table("cache_ceps").upsert(teste_dados).execute()
-        st.sidebar.success("✅ Gravou com sucesso! O banco está perfeito.")
-    except Exception as e:
-        st.sidebar.error(f"🚨 O BANCO RECUSOU: {e}")
