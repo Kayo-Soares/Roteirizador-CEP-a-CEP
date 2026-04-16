@@ -74,7 +74,7 @@ st.markdown("""
 try:
     supabase: Client = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    ai_model = genai.GenerativeModel('gemini-1.5-flash')
+    ai_model = genai.GenerativeModel('gemini-pro')
 except:
     st.error("Erro nas chaves de API. Verifique os Secrets.")
 
