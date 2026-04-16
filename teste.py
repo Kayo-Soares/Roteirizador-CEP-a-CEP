@@ -249,3 +249,21 @@ with t3:
         buf = io.BytesIO()
         df.to_excel(buf, index=False)
         st.download_button("📥 Baixar Malha", buf.getvalue(), "malha_jt.xlsx")
+
+
+        st.sidebar.markdown("---")
+if st.sidebar.button("🛠️ Testar Conexão Supabase"):
+    try:
+        teste_dados = {
+            "cep": "99999999",
+            "logradouro": "Rua do Teste",
+            "bairro": "Bairro Teste",
+            "localidade": "Cidade Teste",
+            "uf": "TS",
+            "lat": "0",
+            "lon": "0"
+        }
+        res = supabase.table("cache_ceps").upsert(teste_dados).execute()
+        st.sidebar.success("✅ Gravou com sucesso! O banco está perfeito.")
+    except Exception as e:
+        st.sidebar.error(f"🚨 O BANCO RECUSOU: {e}")
