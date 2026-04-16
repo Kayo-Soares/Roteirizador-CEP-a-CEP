@@ -154,21 +154,30 @@ async def obter_cep(session, cep, bruto=""):
                 except: return {"status": "CEP NAO ENCONTRADO"}
             else: return {"status": "CEP NAO ENCONTRADO"}
 
-    # 3. Geocodificação de Emergência (Gemini) se a lat/lon estiver vazia
+    # 3. Geocodificação Real (OpenStreetMap) se a lat/lon estiver vazia
     if not dados_base.get("lat") or dados_base.get("lat") in ["None", "0.0", ""]:
         try:
-            endereco = f"{dados_base.get('logradouro')}, {dados_base.get('bairro')}, {dados_base.get('cidade')} - {dados_base.get('estado')}"
-            prompt = f"Retorne apenas um JSON plano com as chaves 'lat' e 'lon' para o endereço: {endereco}. Se não souber a rua, use o centro do bairro."
-            response = await asyncio.to_thread(ai_model.generate_content, prompt)
-            texto_limpo = response.text.replace('```json', '').replace('```', '').strip()
-            geo = json.loads(texto_limpo)
-            dados_base["lat"] = str(geo.get("lat"))
-            dados_base["lon"] = str(geo.get("lon"))
-            dados_base["fonte_api"] = "🧠 Geocodificado por IA"
+            # Monta o endereço exato para buscar no mapa
+            endereco = f"{dados_base.get('logradouro')}, {dados_base.get('bairro')}, {dados_base.get('cidade')}, {dados_base.get('estado')}"
+            url_geo = f"https://nominatim.openstreetmap.org/search?q={endereco}&format=json&limit=1"
+            
+            # Finge ser um navegador para o servidor não bloquear
+            headers = {'User-Agent': 'RoteirizadorJT/1.0'} 
+            
+            async with session.get(url_geo, headers=headers, timeout=5) as r_geo:
+                if r_geo.status == 200:
+                    geo_data = await r_geo.json()
+                    if geo_data: # Se encontrou o lugar no mapa
+                        dados_base["lat"] = str(geo_data[0].get("lat"))
+                        dados_base["lon"] = str(geo_data[0].get("lon"))
+                        dados_base["fonte_api"] = "🌍 OpenStreetMap"
+                    else:
+                        dados_base["fonte_api"] = "⚠️ Rua não mapeada"
+                else:
+                    dados_base["fonte_api"] = "⚠️ Falha Geo"
         except Exception as e:
-            print(f"🚨 ERRO GEMINI (CEP {cep}): {e}")
-            # Vai colocar o motivo do erro direto na tabela para a gente ler! 👇
-            dados_base["fonte_api"] = f"⚠️ Erro IA: {str(e)[:45]}"
+            print(f"🚨 ERRO GEO (CEP {cep}): {e}")
+            dados_base["fonte_api"] = "⚠️ Falha Geo"
     # 4. Salvar/Atualizar no Supabase
     try:
         await asyncio.to_thread(lambda: supabase.table("cache_ceps").upsert({
