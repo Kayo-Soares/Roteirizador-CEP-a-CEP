@@ -146,7 +146,7 @@ async def obter_cep(session, cep, bruto=""):
             dados_base = api_res
         else:
             # Tentar Gemini se a BrasilAPI falhar e tivermos texto bruto
-            if bruto and not bruto.isnumeric():
+            if bruto and not str(bruto).isnumeric():
                 try:
                     p = f"Extraia JSON do endereço: '{bruto}'. Chaves: logradouro, bairro, cidade, estado, lat, lon. Tudo MAIUSCULO."
                     resp = await asyncio.to_thread(ai_model.generate_content, p)
@@ -204,7 +204,7 @@ async def processar_lote(ceps, df_faixas, prog_bar):
             for c_raw in chunk:
                 async def t(raw):
                     async with sem:
-                        c_limpo = re.sub(r"\D", "", str(raw))
+                        c_limpo = re.sub(r"\D", "", str(raw).split('-')[0]).zfill(8)
                         if len(c_limpo) != 8: return {"cep_input": raw, "status": "INVALIDO"}
                         d = await obter_cep(session, c_limpo, raw)
                         
