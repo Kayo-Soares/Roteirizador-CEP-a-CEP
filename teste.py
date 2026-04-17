@@ -119,12 +119,13 @@ async def consultar_api(session, cep):
 
 async def obter_cep(session, cep, bruto=""):
     # 1. Tentar Cache no Supabase
+    # 1. Tentar Cache no Supabase
     try:
         res = await asyncio.to_thread(lambda: supabase.table("cache_ceps").select("*").eq("cep", cep).execute())
         if res.data:
             item = res.data[0]
-            # Se tem endereço E lat/lon válida, retorna direto
-            if item.get("lat") and item.get("lat") not in ["None", "0.0", ""]:
+            # MUDANÇA AQUI: Agora ele aceita usar o banco mesmo sem Latitude!
+            if item.get("logradouro") and item.get("logradouro") != "CEP NAO ENCONTRADO":
                 return {
                     "logradouro": item.get("logradouro"), "bairro": item.get("bairro"),
                     "cidade": item.get("localidade"), "estado": item.get("uf"),
