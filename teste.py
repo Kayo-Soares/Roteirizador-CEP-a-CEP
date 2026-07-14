@@ -234,13 +234,14 @@ async def consultar_viacep(session, cep):
 
 # Nominatim exige no máximo 1 requisição/segundo e User-Agent identificável.
 # Semáforo separado do resto do pipeline para não violar a política de uso.
-_sem_geo = asyncio.Semaphore(1)
-
-async def geocodificar(session, dados_base, cep):
+# IMPORTANTE: não pode ser criado no nível do módulo — cada asyncio.run() cria um
+# event loop novo, e um Semaphore criado fora dele quebra com "bound to a different
+# event loop" na segunda chamada em diante (foi exatamente o crash em produção).
+async def geocodificar(session, dados_base, cep, sem_geo):
     endereco = f"{dados_base.get('logradouro')}, {dados_base.get('bairro')}, {dados_base.get('cidade')}, {dados_base.get('estado')}"
     url_geo = f"https://nominatim.openstreetmap.org/search?q={endereco}&format=json&limit=1"
     headers = {'User-Agent': 'RoteirizadorJT/1.0 (contato: seu-email@dominio.com)'}
-    async with _sem_geo:
+    async with sem_geo:
         try:
             async with session.get(url_geo, headers=headers, timeout=5) as r_geo:
                 if r_geo.status == 200:
@@ -260,7 +261,7 @@ async def geocodificar(session, dados_base, cep):
             await asyncio.sleep(1)  # respeita o limite de 1 req/s do Nominatim
     return dados_base
 
-async def resolver_cep(session, cep, cache_dict, bruto=""):
+async def resolver_cep(session, cep, cache_dict, sem_geo, bruto=""):
     """cache_dict já veio pré-carregado em lote do Supabase (ver processar_lote)."""
     item = cache_dict.get(cep)
     dados_base = None
@@ -289,7 +290,7 @@ async def resolver_cep(session, cep, cache_dict, bruto=""):
                 return {"status": "CEP NAO ENCONTRADO"}
 
     if not dados_base.get("lat") or dados_base.get("lat") in ["None", "0.0", ""]:
-        dados_base = await geocodificar(session, dados_base, cep)
+        dados_base = await geocodificar(session, dados_base, cep, sem_geo)
 
     return dados_base
 
@@ -322,6 +323,7 @@ async def salvar_cache_em_lote(registros):
 async def processar_lote(ceps_brutos, df_faixas_raw, prog_bar):
     TAM_CHUNK = 2000
     sem_api = asyncio.Semaphore(20)  # reduzido de 50 -> 20 após instabilidade observada em lote de 65k CEPs
+    sem_geo = asyncio.Semaphore(1)   # criado aqui, não no módulo — precisa nascer no event loop desta chamada
     df_faixas = preparar_faixas(df_faixas_raw)
     final = []
     total = len(ceps_brutos)
@@ -347,7 +349,7 @@ async def processar_lote(ceps_brutos, df_faixas_raw, prog_bar):
 
             async def processar_um(c_limpo, raw):
                 async with sem_api:
-                    d = await resolver_cep(session, c_limpo, cache_dict, raw)
+                    d = await resolver_cep(session, c_limpo, cache_dict, sem_geo, raw)
 
                     jt = {"jt_area_nome": "NAO MAPEADO"}
                     if df_faixas is not None and d.get("status") != "CEP NAO ENCONTRADO":
