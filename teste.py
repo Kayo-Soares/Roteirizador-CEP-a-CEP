@@ -128,33 +128,50 @@ def _cor_status(valor):
     }
     return cores.get(valor, "")
 
+LIMITE_PREVIEW_COLORIDO = 3_000  # acima disso, o Streamlit pode recusar renderizar o Styler (StreamlitAPIException)
+
 def exibir_resultado(df, nome_arquivo, key_prefix, mostrar_tudo=True, falhas_cache=0):
     renderizar_kpis(df)
 
     if falhas_cache:
         st.warning(f"⚠️ {falhas_cache} lote(s) não foram salvos no cache do Supabase (mas estão no resultado abaixo). Rode de novo mais tarde se quiser garantir o cache.")
 
-    df_mostrar = df if mostrar_tudo else df.head(100)
-    if "status" in df_mostrar.columns:
-        styler = df_mostrar.style
-        # pandas >= 2.1 renomeou applymap -> map; mantém compatível com as duas versões
-        aplicar_estilo = styler.map if hasattr(styler, "map") else styler.applymap
-        st.dataframe(aplicar_estilo(_cor_status, subset=["status"]), use_container_width=True)
-    else:
-        st.dataframe(df_mostrar, use_container_width=True)
-
+    # Download sempre primeiro — não pode depender da tabela colorida renderizar sem erro,
+    # senão uma falha de UI faz perder o acesso ao resultado inteiro (foi o que aconteceu com 65k linhas).
     buf = io.BytesIO()
     df.to_excel(buf, index=False)
     st.download_button(
         "📥 Baixar Resultado (Excel)",
         buf.getvalue(),
         nome_arquivo,
-        key=f"dl_{key_prefix}",  # evita DuplicateWidgetID entre abas
+        key=f"dl_{key_prefix}",
     )
+
+    if "status" in df.columns:
+        opcoes = ["Todos"] + sorted(df["status"].dropna().unique().tolist())
+        filtro = st.selectbox("Filtrar por status:", opcoes, key=f"filtro_{key_prefix}")
+        df_filtrado = df if filtro == "Todos" else df[df["status"] == filtro]
+    else:
+        df_filtrado = df
+
+    df_mostrar = df_filtrado if mostrar_tudo else df_filtrado.head(100)
+
+    if "status" in df_mostrar.columns and len(df_mostrar) <= LIMITE_PREVIEW_COLORIDO:
+        try:
+            styler = df_mostrar.style
+            aplicar_estilo = styler.map if hasattr(styler, "map") else styler.applymap
+            st.dataframe(aplicar_estilo(_cor_status, subset=["status"]), use_container_width=True)
+        except Exception as e:
+            print(f"🚨 ERRO ao aplicar estilo na tabela: {e}")
+            st.dataframe(df_mostrar, use_container_width=True)
+    else:
+        if "status" in df_mostrar.columns and len(df_mostrar) > LIMITE_PREVIEW_COLORIDO:
+            st.caption(f"ℹ️ Exibindo sem coloração — {len(df_mostrar):,} linhas acima do limite de {LIMITE_PREVIEW_COLORIDO:,} para preview colorido. Use o filtro acima para reduzir, ou baixe o Excel completo acima.")
+        st.dataframe(df_mostrar, use_container_width=True)
 
 # ── Motor de Dados ──────────────────────────────────────────────────────────────
 COLUNAS_FAIXA = {"area_nome": "Nome de área de unidade", "area_codigo": "Código de área de unidade", "estacao": "Número da sua estação", "pdd": "PDD pertencente", "cep_ini": "CEP inicial", "cep_fim": "CEP final"}
-MAX_MALHA_POR_LOTE = 50_000  # tamanho de cada sub-lote processado por vez; faixas maiores são divididas automaticamente
+MAX_MALHA_POR_LOTE = 10_000  # tamanho de cada sub-lote processado por vez; faixas maiores são divididas automaticamente
 
 def preparar_faixas(df_faixas_raw):
     """Ordena as faixas por cep_ini uma única vez, permitindo busca O(log n) por CEP
@@ -304,7 +321,7 @@ async def salvar_cache_em_lote(registros):
 # ── Processamento em Lote ─────────────────────────────────────────────────────────
 async def processar_lote(ceps_brutos, df_faixas_raw, prog_bar):
     TAM_CHUNK = 2000
-    sem_api = asyncio.Semaphore(50)  # BrasilAPI/CPU — pode ficar alto
+    sem_api = asyncio.Semaphore(20)  # reduzido de 50 -> 20 após instabilidade observada em lote de 65k CEPs
     df_faixas = preparar_faixas(df_faixas_raw)
     final = []
     total = len(ceps_brutos)
@@ -425,8 +442,11 @@ with t1:
     if st.button("🚀 Processar Avulsos") and txt:
         t0 = time.time()
         res, falhas = asyncio.run(processar_lote(txt.split("\n"), df_faixas, st.progress(0)))
-        df = pd.DataFrame(res)
-        st.success(f"⏱️ Tempo: {formatar_tempo(time.time() - t0)}")
+        st.session_state["res_avulso"] = (pd.DataFrame(res), falhas, time.time() - t0)
+
+    if "res_avulso" in st.session_state:
+        df, falhas, tempo = st.session_state["res_avulso"]
+        st.success(f"⏱️ Tempo: {formatar_tempo(tempo)}")
         exibir_resultado(df, "resultado_avulso.xlsx", key_prefix="avulso", falhas_cache=falhas)
 
 with t2:
@@ -437,9 +457,12 @@ with t2:
         if st.button("🚀 Processar Planilha"):
             t0 = time.time()
             res, falhas = asyncio.run(processar_lote(df_p[col].tolist(), df_faixas, st.progress(0)))
-            df_res = pd.DataFrame(res)
-            st.success(f"⏱️ Tempo: {formatar_tempo(time.time() - t0)}")
-            exibir_resultado(df_res, "resultado_jt.xlsx", key_prefix="lote", mostrar_tudo=False, falhas_cache=falhas)
+            st.session_state["res_lote"] = (pd.DataFrame(res), falhas, time.time() - t0)
+
+    if "res_lote" in st.session_state:
+        df_res, falhas, tempo = st.session_state["res_lote"]
+        st.success(f"⏱️ Tempo: {formatar_tempo(tempo)}")
+        exibir_resultado(df_res, "resultado_jt.xlsx", key_prefix="lote", mostrar_tudo=False, falhas_cache=falhas)
 
 with t3:
     f_in = st.text_area(f"Pares Início Fim (ex: 66080000 66080100) — faixas grandes são divididas automaticamente em lotes de {MAX_MALHA_POR_LOTE:,}", height=150)
@@ -486,7 +509,22 @@ with t3:
                 resultados_totais.extend(res)
                 falhas_totais += falhas
 
+                # Rede de segurança: se o app cair mais adiante (ex: ao renderizar a tabela final),
+                # o que já foi processado até aqui continua acessível — não depende do fim do loop.
+                if len(sub_lotes) > 1:
+                    buf_parcial = io.BytesIO()
+                    pd.DataFrame(resultados_totais).to_excel(buf_parcial, index=False)
+                    st.download_button(
+                        f"💾 Baixar parcial — lote {idx_lote + 1}/{len(sub_lotes)} concluído ({len(resultados_totais):,} CEPs)",
+                        buf_parcial.getvalue(),
+                        f"resultado_malha_parcial_lote{idx_lote + 1}.xlsx",
+                        key=f"dl_parcial_malha_{idx_lote}",
+                    )
+
             progresso_geral.progress(1.0, text="✅ Concluído")
-            df = pd.DataFrame(resultados_totais)
-            st.success(f"⏱️ Tempo total: {formatar_tempo(time.time() - t0)}")
-            exibir_resultado(df, "resultado_malha.xlsx", key_prefix="malha", falhas_cache=falhas_totais)
+            st.session_state["res_malha"] = (pd.DataFrame(resultados_totais), falhas_totais, time.time() - t0)
+
+    if "res_malha" in st.session_state:
+        df, falhas, tempo = st.session_state["res_malha"]
+        st.success(f"⏱️ Tempo total: {formatar_tempo(tempo)}")
+        exibir_resultado(df, "resultado_malha.xlsx", key_prefix="malha", falhas_cache=falhas)
